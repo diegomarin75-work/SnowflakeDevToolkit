@@ -1631,7 +1631,7 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
           RowCount=Output["row_count"]
           if RowCount!=0:
             if len(AllRowData)!=0:
-              AllRowData.append(TABLE_HLINE)
+              _pr.AddHline(AllRowData)
             AllRowData.extend([[ConnectionName,*Row] for Row in RowData])
           AllRowCount+=RowCount
         if len(AllRowData)==0:
