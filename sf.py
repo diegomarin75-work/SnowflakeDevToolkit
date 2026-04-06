@@ -1511,7 +1511,7 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
 
   #Split statements
   if re.search(r'\bBEGIN\b',SqlQueryAfterMacros,re.IGNORECASE):
-    Statements=[[SqlQueryAfterMacros]]
+    Statements=[SqlQueryAfterMacros]
   else:
     Statements=SplitSqlStatements(SqlQueryAfterMacros)
 
@@ -2110,7 +2110,7 @@ if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE",
 
 #Script execution modes
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,Config)
+  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,Config)
 
 #Script testing modes
 elif RunMode in ["TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF"]:
