@@ -1296,13 +1296,15 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
       Replacements=Tag["replacements"]
       for Replacement in Replacements:
         for Rule in Config["rules"]:
+          Scope=Rule["scope"]
           SearchStr=Rule[SourceLane].replace(TagName,Replacement)
           ReplaceStr=Rule[DestinLane].replace(TagName,Replacement)
-          for i in range(len(Lines)):
-            NewLine=Lines[i].replace(SearchStr,ReplaceStr)
-            if NewLine!=Lines[i]:
-              FileChanges+=1
-            Lines[i]=NewLine
+          if fnmatch.fnmatch(FileName.replace(GitRepoPath,""),Scope)==True:
+            for i in range(len(Lines)):
+              NewLine=Lines[i].replace(SearchStr,ReplaceStr)
+              if NewLine!=Lines[i]:
+                FileChanges+=1
+              Lines[i]=NewLine
     if FileChanges!=0:
       FilesModified+=1
       TotalChanges+=FileChanges
