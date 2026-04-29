@@ -193,7 +193,7 @@ Defines project-level source code lane replication rules. This file is a diction
 | `lanes` | Dictionary of lane names (e.g. `core`, `test`). Each lane has: `path` (relative path from repo root), `file_suffix` (suffix appended/removed on file names during replication), `modify_warning` (`1` to prompt before modifying), `testing_lane` (name of lane used for test mode), `used_schemas` (list of schemas this lane uses — used for forbidden schema checks). |
 | `folders` | List of folder paths (relative to the lane root) that are included in replication. |
 | `tags` | List of search tags with their replacement variants (used for environment-aware string substitution). |
-| `rules` | List of translation rules. Each rule has a `name` and a string value for each lane name. During replication, the source lane string is replaced with the destination lane string in all replicated files. |
+| `rules` | List of translation rules. Each rule has a `name` and a string value for each lane name. During replication, the source lane string is replaced with the destination lane string in all replicated files. Also the attribute `scope` allows to limit the application of the translation rules.|
 
 Example:
 
@@ -225,8 +225,8 @@ Example:
     ],
 
     "rules": [
-      {"name": "use_schema", "core": "USE SCHEMA MY_SCHEMA;",              "test": "USE SCHEMA TEST;"},
-      {"name": "objects",    "core": "MY_DB_${tag}.MY_SCHEMA.",            "test": "MY_DB_${tag}.TEST."}
+      {"name": "use_schema", "scope":"*.sql", "core": "USE SCHEMA MY_SCHEMA;",              "test": "USE SCHEMA TEST;"},
+      {"name": "objects",    "scope":"*.sql", "core": "MY_DB_${tag}.MY_SCHEMA.",            "test": "MY_DB_${tag}.TEST."}
     ]
   }
 }
