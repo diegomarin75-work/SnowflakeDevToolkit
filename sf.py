@@ -83,6 +83,7 @@ def ShowHelp():
   print("--force                : Do not ask user before executing scripts")
   print("--ignore-hash          : Ignore file hash when checking if a script has been executed already")
   print("--ignore-schema-check  : Ignores forbidden schema check when replicating files between source code lanes")
+  print("--continue-on-error    : Continue executing next scripts even if some script fails (only for script execution modes)")
   print("--payload              : Executes query as payload inside another query (only for --sql option)")
   print("--types                : Display output column metadata instead of query results (only for --sql option)")
   print("--sep                  : Do not combine outputs from several connections, display separated (only for --sql option)")
@@ -123,6 +124,7 @@ def GetCommandLineOptions():
   ForceMode=False
   IgnoreHash=False
   IgnoreSchemaCheck=False
+  ContinueOnError=False
   PayloadMode=False
   DisplayTypes=False
   CombineResults=True
@@ -186,6 +188,8 @@ def GetCommandLineOptions():
       IgnoreHash=True
     elif Item=="--ignore-schema-check":
       IgnoreSchemaCheck=True
+    elif Item=="--continue-on-error":
+      ContinueOnError=True
     elif Item=="--payload":
       PayloadMode=True
     elif Item=="--types":
@@ -306,6 +310,7 @@ def GetCommandLineOptions():
   Options["force_mode"]=ForceMode
   Options["ignore_hash"]=IgnoreHash
   Options["ignore_schema_check"]=IgnoreSchemaCheck
+  Options["continue_on_error"]=ContinueOnError
   Options["payload_mode"]=PayloadMode
   Options["display_types"]=DisplayTypes
   Options["combine_results"]=CombineResults
@@ -1736,7 +1741,7 @@ def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
 # ---------------------------------------------------------------------------------------------------------------------
 # Run modes for script execution
 # ---------------------------------------------------------------------------------------------------------------------
-def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,Config,ScLanesConfig=None,TestMode=False):
+def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig=None,TestMode=False):
 
   #Get files for execute single script mode
   if RunMode in ["EXEC-FILE","TEST-FILE"]:
@@ -1895,6 +1900,8 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
 
   #Execute queries
   TotalSeconds=0
+  ExecutedQueries=0
+  FailedQueries=0
   MaxLengthFileName=max([len(Query["file_name"]) for Query in Queries])
   MaxLengthIndex=max([len(str(Query["index"])) for Query in Queries])
   for Query in Queries:
@@ -1915,14 +1922,21 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
       if Query!=None:
         _pr.Print("Passed query:")
         CodePrint(Query)
-      return False
-    if ShowMode==False:
+      if ContinueOnError==False:
+        return False
+      else:
+        FailedQueries+=1
+    ExecutedQueries+=1
+    if ShowMode==False and Status==True:
       UpdateFileExecutionDateHash(AbsPath(FileName),ConnectionName)
       ElapsedSeconds=(datetime.datetime.now()-StartTime).total_seconds()
       TotalSeconds+=ElapsedSeconds
       _pr.Print(f"DONE ({FormatSeconds(ElapsedSeconds)})")
   if ShowMode==False:
-    _pr.Print(f"[OK] All scripts executed successfully ({FormatSeconds(TotalSeconds)})")
+    if FailedQueries==0:
+      _pr.Print(f"[OK] All scripts executed successfully [{ExecutedQueries} queries] ({FormatSeconds(TotalSeconds)})")
+    else:
+      _pr.Print(f"[WARNING] {FailedQueries}/{ExecutedQueries} queries failed to execute ({FormatSeconds(TotalSeconds)})")
 
   #Return success
   return True
@@ -2037,6 +2051,7 @@ if Status==True:
   ForceMode=Options["force_mode"]
   IgnoreHash=Options["ignore_hash"]
   IgnoreSchemaCheck=Options["ignore_schema_check"]
+  ContinueOnError=Options["continue_on_error"]
   PayloadMode=Options["payload_mode"]
   DisplayTypes=Options["display_types"]
   CombineResults=Options["combine_results"]
@@ -2112,11 +2127,11 @@ if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE",
 
 #Script execution modes
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,Config)
+  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config)
 
 #Script testing modes
 elif RunMode in ["TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,Config,ScLanesConfig,TestMode=True)
+  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig,TestMode=True)
 
 #Execute single SQL Query mode
 elif RunMode=="EXEC-SQL":
