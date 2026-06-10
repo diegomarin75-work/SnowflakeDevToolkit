@@ -1238,7 +1238,7 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
 
   #Rename files on destination lane
   FilesRenamed=0
-  SelDestFiles=[]
+  FileSelection=[]
   for Folder in Config["folders"]:
     for RootFolder,_,Files in os.walk(os.path.join(DestLanePath,Folder)):
       for FileName in Files:
@@ -1261,7 +1261,8 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
           if DestinUpdate==True:
             try:
               os.replace(OldName,NewName)
-              SelDestFiles.append(NewName)
+              OrigName=OldName.replace(DestLanePath,SourLanePath)
+              FileSelection.append({"orig_name":OrigName,"repl_name":NewName})
               FilesRenamed+=1
             except Exception as Ex:
               OldName=OldName.replace(GitRepoPath+os.sep,"")
@@ -1275,23 +1276,27 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
   FilesCopied=0
   FilesModified=0
   TotalChanges=0
-  for FileName in SelDestFiles:
+  for File in FileSelection:
         
+    #Get file names
+    OrigName=File["orig_name"]
+    ReplName=File["repl_name"]
+    
     #Detect file encoding
-    BinaryFile=DetectBinaryFile(FileName)
+    BinaryFile=DetectBinaryFile(ReplName)
     if BinaryFile==True:
       if Verbose==True:
-        _pr.Print("Ignoring binary file "+FileName)
+        _pr.Print("Ignoring binary file "+ReplName)
       continue
 
     #Read file
     try:
-      Encoding=DetectFileEncoding(FileName)
-      File=open(FileName,"r",newline='',encoding=Encoding)
+      Encoding=DetectFileEncoding(ReplName)
+      File=open(ReplName,"r",newline='',encoding=Encoding)
       Lines=[Line.rstrip("\r\n") for Line in File]
       File.close()
     except Exception as Ex:
-      Message=f"Unable to read file ({FileName.replace(GitRepoPath+os.sep,"")}): {Ex}"
+      Message=f"Unable to read file ({ReplName.replace(GitRepoPath+os.sep,"")}): {Ex}"
       return False,Message
     
     #Do translation rules
@@ -1304,7 +1309,7 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
           Scope=Rule["scope"]
           SearchStr=Rule[SourceLane].replace(TagName,Replacement)
           ReplaceStr=Rule[DestinLane].replace(TagName,Replacement)
-          if fnmatch.fnmatch(FileName.replace(GitRepoPath,""),Scope)==True:
+          if fnmatch.fnmatch(ReplName.replace(GitRepoPath,""),Scope)==True:
             for i in range(len(Lines)):
               NewLine=Lines[i].replace(SearchStr,ReplaceStr)
               if NewLine!=Lines[i]:
@@ -1314,35 +1319,37 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
       FilesModified+=1
       TotalChanges+=FileChanges
     else:
-      if FileName.lower().endswith(EXEC_SCRIPT_EXT)==True:
-        Message=f"Executable file {FileName.replace(GitRepoPath+os.sep,"")} did not produce any replacements! Source code lanes probably not configured correctly!"
+      if ReplName.lower().endswith(EXEC_SCRIPT_EXT)==True:
+        Message=f"Executable file {ReplName.replace(GitRepoPath+os.sep,"")} did not produce any replacements! Source code lanes probably not configured correctly!"
         return False,Message
     
     #Safe check of forbidden schemas in resulting file
-    if FileName.lower().endswith(EXEC_SCRIPT_EXT)==True and IgnoreSchemaCheck==False:
+    if ReplName.lower().endswith(EXEC_SCRIPT_EXT)==True and IgnoreSchemaCheck==False:
       for i in range(len(Lines)):
         for ForbiddenSchema in ForbiddenSchemas:
           if re.search(r'\b'+ForbiddenSchema+r'\b',Lines[i],re.IGNORECASE)!=None:
-            Message=f"Code replication failure: Line {i} in file ({FileName.replace(GitRepoPath+os.sep,"")}) contains forbidden schema {ForbiddenSchema} after replacements"
-            Message+="\n"+FileName.replace(GitRepoPath+os.sep,"")+":"
+            Message=f"Code replication failure: Line {i} in file ({ReplName.replace(GitRepoPath+os.sep,"")}) contains forbidden schema {ForbiddenSchema} after replacements"
+            Message+="\n"+ReplName.replace(GitRepoPath+os.sep,"")+":"
             Message+="\n"+str(i)+": "+Lines[i]
             return False,Message
 
     #Write file
     if DestinUpdate==True:
       try:
-        File=open(FileName,"w",encoding=Encoding)
+        File=open(ReplName,"w",encoding=Encoding)
         File.write("\n".join(Lines))
         File.close()
       except Exception as Ex:
-        Message=f"Unable to write file ({FileName.replace(GitRepoPath+os.sep,"")}): {Ex}"
+        Message=f"Unable to write file ({ReplName.replace(GitRepoPath+os.sep,"")}): {Ex}"
         return False,Message
       FilesCopied+=1
 
   #Return replicated files
   if ReplicFiles!=None:
-    for FileName in SelDestFiles:
-      ReplicFiles.append(FileName.replace(GitRepoPath+os.sep,""))
+    for File in FileSelection:
+      OrigName=File["orig_name"].replace(GitRepoPath+os.sep,"")
+      ReplName=File["repl_name"].replace(GitRepoPath+os.sep,"")
+      ReplicFiles.append({"orig_name":OrigName,"repl_name":ReplName})
 
   #Message
   if Verbose==True:
@@ -1354,7 +1361,7 @@ def ProjectLaneReplicate(RunMode,GitRepoPath,SourceLane,DestinLane,FilePattern,D
 # ---------------------------------------------------------------------------------------------------------------------
 # Create resources for testing
 # ---------------------------------------------------------------------------------------------------------------------
-def CreateTestResources(Path,Config,IgnoreSchemaCheck):
+def CreateTestResources(Path,Config,DeployConfig,IgnoreSchemaCheck,Resources=None):
 
   #Check source code lanes are defined
   if Config==None:
@@ -1385,6 +1392,7 @@ def CreateTestResources(Path,Config,IgnoreSchemaCheck):
   #Get configuration for this repo
   if GitRepoPath in Config:
     Config=Config[GitRepoPath]
+    DeployCfg=(DeployConfig[GitRepoPath] if GitRepoPath in DeployConfig else None)
   else:
     Message=f"Git repository ({GitRepoPath}) does not appear in configuration file!"
     return False,Message,None
@@ -1424,10 +1432,19 @@ def CreateTestResources(Path,Config,IgnoreSchemaCheck):
 
   #Get result
   if ReplicMode=="REPL-FILE":
-    Result=ReplicFiles[0]
+    Result=ReplicFiles[0]["repl_name"]
   else:
     Result=AbsPath(Config["lanes"][DestinLane]["path"]).replace(GitRepoPath+os.sep,"")
 
+  #Fill resources list
+  if Resources!=None:
+    FileOrder={File:Index for Index,File in enumerate(DeployCfg)}
+    for NaturalIndex,File in enumerate(ReplicFiles):
+      Order=(FileOrder[File["orig_name"]] if File["orig_name"] in FileOrder else len(ReplicFiles)+NaturalIndex)
+      Resource={"order":Order,"orig_name":File["orig_name"],"repl_name":File["repl_name"]}
+      Resources.append(Resource)
+    Resources.sort(key=lambda x:x["order"])
+  
   #Return success
   return True,"",Result
 
@@ -1741,8 +1758,12 @@ def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
 # ---------------------------------------------------------------------------------------------------------------------
 # Run modes for script execution
 # ---------------------------------------------------------------------------------------------------------------------
-def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig=None,TestMode=False):
+def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,
+                           DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig=None,DeployConfig=None,TestMode=False):
 
+  #Test resources list
+  Resources=[]
+  
   #Get files for execute single script mode
   if RunMode in ["EXEC-FILE","TEST-FILE"]:
     if FileName.lower().endswith(EXEC_SCRIPT_EXT)==False:
@@ -1750,7 +1771,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
       return False
     WorkFileName=FileName
     if TestMode==True:
-      Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,IgnoreSchemaCheck)
+      Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,DeployConfig,IgnoreSchemaCheck,Resources)
       if Status==False:
         _pr.Print(Message)
         return False
@@ -1773,7 +1794,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
     Files=[]
     WorkFolder=FolderName
     if TestMode==True:
-      Status,Message,TestFolder=CreateTestResources(WorkFolder,ScLanesConfig,IgnoreSchemaCheck)
+      Status,Message,TestFolder=CreateTestResources(WorkFolder,ScLanesConfig,DeployConfig,IgnoreSchemaCheck,Resources)
       if Status==False:
         _pr.Print(Message)
         return False
@@ -1810,7 +1831,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
       if FileStatus in ["M-","A-","-M","-A","??"] and FileExt==EXEC_SCRIPT_EXT:
         WorkFileName=FileName
         if TestMode==True:
-          Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,IgnoreSchemaCheck)
+          Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,DeployConfig,IgnoreSchemaCheck,Resources)
           if Status==False:
             _pr.Print(Message)
             return False
@@ -1845,7 +1866,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
       if Status in ["A","M","R"] and FileExt==EXEC_SCRIPT_EXT:
         WorkFileName=FileName
         if TestMode==True:
-          Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,IgnoreSchemaCheck)
+          Status,Message,TestFileName=CreateTestResources(WorkFileName,ScLanesConfig,DeployConfig,IgnoreSchemaCheck,Resources)
           if Status==False:
             _pr.Print(Message)
             return False
@@ -1861,6 +1882,21 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
     if len(Files)==0:
       _pr.Print(f"No changed files detected or all changed files were executed already")
       return True
+  
+  #Reorder files according to deploy configuration
+  OrderedFiles=[]
+  for NaturalIndex,File in enumerate(Files):
+    Order=-1
+    for Resource in Resources:
+      if (RunMode.startswith("EXEC-") and File==Resource["orig_name"]) \
+      or (RunMode.startswith("TEST-") and File==Resource["repl_name"]):
+        Order=Resource["order"]
+        break
+    if Order==-1:
+      Order=len(Resources)+NaturalIndex
+    OrderedFiles.append({"order":Order,"name":File})
+  OrderedFiles.sort(key=lambda x:x["order"])
+  Files=[File["name"] for File in OrderedFiles]
 
   #Import snowfkake libraries
   Status,Message=ImportSnowflakeLibraries()
@@ -2089,6 +2125,11 @@ if "sclanes_file" in Config:
   if Status==False:
     _pr.Print(Message)
     exit(1)
+if "deploy_file" in Config:
+  Status,Message,DeployConfig=JsonFileParser(Config["deploy_file"])
+  if Status==False:
+    _pr.Print(Message)
+    exit(1)
 
 #If run mode is macro run we need to check passed macro
 PreloadLibraries=True
@@ -2127,11 +2168,11 @@ if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE",
 
 #Script execution modes
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config)
+  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,None,DeployConfig)
 
 #Script testing modes
 elif RunMode in ["TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig,TestMode=True)
+  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig,DeployConfig,TestMode=True)
 
 #Execute single SQL Query mode
 elif RunMode=="EXEC-SQL":
