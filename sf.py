@@ -19,6 +19,7 @@ import contextlib
 import traceback
 import threading
 from printlib import PrintingLibrary
+from sfmanager import SnowflakeManager
 
 #Constants
 EXEC_SCRIPT_EXT=".sql"
@@ -38,8 +39,7 @@ SNOWFLAKE_TYPE_CODES={0 :"int", 1 :"real", 2 :"string", 3 :"date", 4 :"timestamp
                       8 :"timestamp_tz", 9 :"object", 10:"array", 11:"binary", 12:"time", 13:"boolean", 14:"geography", 15:"geometry", 16:"vector"  }
 
 #Global variablees
-_ImportSnowflakeError=None
-_SnowflakeLibrariesReady=threading.Event() #Event that signals when Snowflake libraries are loaded
+_sf=None #Snowflake manager instance
 
 #----------------------------------------------------------------------------------------------------------------------
 # Show help
@@ -509,43 +509,6 @@ def CodePrint(Code):
     _pr.Print(str(Index+1).rjust(MaxLength)+" : "+Line)
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Daemon to load snowflake libraries
-# ---------------------------------------------------------------------------------------------------------------------
-def ImportSnowflakeLibrariesDaemon():
-  global _ImportSnowflakeError
-  global _SnowflakeLibrariesReady
-  _ImportSnowflakeError=None
-  try:
-    from snowflake.connector import connect
-    from snowflake.connector.util_text import split_statements
-    globals()["SnowflakeConnect"]=connect
-    globals()["SnowflakeSplitStatements"]=split_statements
-  except Exception as Ex:
-    _ImportSnowflakeError="Exception happened while loading snowflake libraries: "+str(Ex)
-  finally:
-    _SnowflakeLibrariesReady.set()
-
-# ---------------------------------------------------------------------------------------------------------------------
-# Preload snowflake libraries
-# ---------------------------------------------------------------------------------------------------------------------
-def PreloadSnowflakeLibraries():
-  threading.Thread(target=ImportSnowflakeLibrariesDaemon,daemon=True).start()
-
-# ---------------------------------------------------------------------------------------------------------------------
-# Import snowflake libraries
-# (wait for daemon to finish)
-# ---------------------------------------------------------------------------------------------------------------------
-def ImportSnowflakeLibraries():
-  _SnowflakeLibrariesReady.wait(PRELOAD_LIBRARIES_TIMEOUT_SECS)
-  if not _SnowflakeLibrariesReady.is_set():
-    Message="Snowflake libraries load timeout reached!"
-    return False,Message
-  if _ImportSnowflakeError!=None:
-    return False,_ImportSnowflakeError
-  else:
-    return True,""
-
-# ---------------------------------------------------------------------------------------------------------------------
 # Detect binary file
 # ---------------------------------------------------------------------------------------------------------------------
 def DetectBinaryFile(FilePath,NumBytes=10000):
@@ -705,7 +668,7 @@ def SplitSqlStatements(Script):
   
   #Split statements with snowflake splitter
   #(limitation: it does not join BEGIN...END blocks into a single statement)
-  Statements=SnowflakeSplitStatements(io.StringIO(Script),remove_comments=True)
+  Statements=_sf.SplitStatements(Script)
   Statements=[Statement[0] for Statement in Statements if len(Statement[0].strip())!=0]
   
   #Calculate nesting level of each statement
@@ -859,32 +822,18 @@ def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUT
       return False,Message,WrappedMode,None,None,None
 
   #Open connection
-  try:
-    with contextlib.redirect_stdout(io.StringIO()):
-      Conn=SnowflakeConnect(connections_file_path=pathlib.Path(ConnectionsFile),connection_name=ConnectionName,insecure_mode=True)
-  except Exception as Ex:
-    Message=f"Cannot open connection to snowflake: {str(Ex)}"
+  Status,Message=_sf.OpenConnection(ConnectionName)
+  if Status==False:
     return False,Message,WrappedMode,None,None,None
 
   #Execute query
-  try:
-    Cursor=Conn.cursor()
-    Cursor.execute(Query)
-    Result=Cursor.fetchall()
-    ColMetaData=Cursor.description
-  except KeyboardInterrupt as Ex:
-    Message=f"Interrupted by user"
-    return False,Message,WrappedMode,None,None,None
-  except Exception as Ex:
-    Message=f"Execution error: {str(Ex)}"
+  Status,Message,Result,ColMetaData=_sf.ExecuteRawQuery(Query)
+  if Status==False:
     return False,Message,WrappedMode,Query,None,None
   if WrappedMode==True and Result[0][0]!="DONE":
     Message=Result[0][0]
     return False,Message,WrappedMode,Query,None,None
   
-  #Closing connection
-  Conn.close()
-
   #Return success
   return True,"",WrappedMode,None,Result,ColMetaData
 
@@ -1523,13 +1472,6 @@ def RunModeMacros(RunMode,MacroFilter,Config):
 # ---------------------------------------------------------------------------------------------------------------------
 def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,DebugMode,PayloadMode):
   
-  #Import snowflake libraries
-  _pr.Print("Importing snowflake libraries ...",Volatile=True)
-  Status,Message=ImportSnowflakeLibraries()
-  if Status==False:
-    print(Message)
-    return False
-
   #Complete macro replacements
   SqlQueryAfterMacros,MacroColumnFormats=ExpandMacros(SqlQuery,MacrosConfig)
 
@@ -1673,13 +1615,6 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
 # ---------------------------------------------------------------------------------------------------------------------
 def RunModeListSchema(Schema,ConnectionName,ConnectionsFile,Config):
 
-  #Import snowflake libraries
-  _pr.Print("Importing snowflake libraries ...",Volatile=True)
-  Status,Message=ImportSnowflakeLibraries()
-  if Status==False:
-    _pr.Print(Message)
-    return False
-
   #Get objects in schema
   Status,Message,Objects=GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config)
   if Status==False:
@@ -1703,13 +1638,6 @@ def RunModeListSchema(Schema,ConnectionName,ConnectionsFile,Config):
 # Run mode for drop objects in schema
 # ---------------------------------------------------------------------------------------------------------------------
 def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
-
-  #Import snowflake libraries
-  _pr.Print("Importing snowflake libraries ...",Volatile=True)
-  Status,Message=ImportSnowflakeLibraries()
-  if Status==False:
-    _pr.Print(Message)
-    return False
 
   #Get objects in schema
   Status,Message,Objects=GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config)
@@ -1897,12 +1825,6 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
     OrderedFiles.append({"order":Order,"name":File})
   OrderedFiles.sort(key=lambda x:x["order"])
   Files=[File["name"] for File in OrderedFiles]
-
-  #Import snowfkake libraries
-  Status,Message=ImportSnowflakeLibraries()
-  if Status==False:
-    _pr.Print(Message)
-    return False
 
   #Get statements from files
   Status,Queries=GetQueriesInFiles(Files,ConnectionName,Config)
@@ -2148,9 +2070,8 @@ if RunMode=="MACRO-RUN":
   if MacroDef["kind"]=="python":
     PreloadLibraries=False
 
-#Preload snowflake libraries
-if PreloadLibraries==True:
-  PreloadSnowflakeLibraries()
+#Initialize snowflake manager
+_sf=SnowflakeManager(PreloadLibraries=PreloadLibraries,ConnectionsFile=ConnectionsFile)
 
 #Check connections exist on config file and check connection readiness
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF","SCHEMA-LIST","SCHEMA-CLEAN","EXEC-SQL"] or (RunMode=="MACRO-RUN" and MacroDef["kind"]=="sql"):
@@ -2203,6 +2124,8 @@ elif RunMode in ["MACRO-LIST","MACRO-DETAIL"]:
   Status=RunModeMacros(RunMode,MacroFilter,MacrosConfig)
 
 #Return code
+if _sf is not None:
+  _sf.CloseConnection()
 if Status==False:
   exit(1)
 else:
