@@ -32,7 +32,7 @@ PRELOAD_LIBRARIES_TIMEOUT_SECS=30
 
 #Run mode set options
 RUN_MODE_OPTIONS=["--exec-file","--exec-folder","--exec-changes","--exec-diff","--test-file","--test-folder","--test-changes","--test-diff",
-                  "--schema-list","--schema-drop","--repl-full","--repl-changes","--repl-diff","--repl-file","--sql","--macro-list","--macro-detail","--<macro>"]
+                  "--schema-list","--schema-clean","--repl-full","--repl-changes","--repl-diff","--repl-file","--sql","--macro-list","--macro-detail","--<macro>"]
 
 #Snowflake type codes
 SNOWFLAKE_TYPE_CODES={0 :"int", 1 :"real", 2 :"string", 3 :"date", 4 :"timestamp", 5 :"variant", 6 :"timestamp_ltz", 7 :"timestamp_tz", 
@@ -50,7 +50,7 @@ def ShowHelp():
   print("Usage:")
   print("Script execution > python sf.py (--exec-file:<name>|--exec-folder:<name>|--exec-changes|--exec-diff:<branch>) --con:<name> [--sfcon:<file>] [--force] [--ignore-hash] [--show] [--debug] [--silent]")
   print("Script test      > python sf.py (--test-file:<name>|--test-folder:<name>|--test-changes|--test-diff:<branch>) --con:<name> [--sfcon:<file>] [--force] [--ignore-hash] [--show] [--debug] [--silent]")
-  print("Schema operation > python sf.py (--schema-list:<schema>|--schema-drop:<schema>) --con:<name> [--sfcon:<file>] [--silent]")
+  print("Schema operation > python sf.py (--schema-list:<schema>|--schema-clean:<schema>) --con:<name> [--name-like:<filter>] [--sfcon:<file>] [--silent]")
   print("Code replication > python sf.py (--repl-full|--repl-changes|--repl-diff:<branch>|--repl-file:<pattern>) [--lanes:<sour>,<dest>] [--update] [--sfcon:<file>]")   
   print("SQL query        > python sf.py (--sql:<text>) --con:<name> [--sfcon:<file>] [--payload] [--types] [--sep] [--csv] [--show] [--debug] [--silent]")
   print("Macros           > python sf.py (--<macro>(<arg>)|--macro-list|--macro-detail:<filter>)")
@@ -65,7 +65,7 @@ def ShowHelp():
   print("--test-changes           : Execute in test mode all detected changed/added sql scripts in git repo from diff comparison to <branch>")
   print("--test-diff:<branch>     : Execute in test mode all different sql scripts in git repo")
   print("--schema-list:<schema>   : List al objects in a given schema (schema name using current connection or fully qualified)")
-  print("--schema-drop:<schema>   : Drops all objects in a given schema but not the schema (schema name using current connection or fully qualified)")
+  print("--schema-clean:<schema>  : Drops all objects in a given schema but not the schema (schema name using current connection or fully qualified)")
   print("--repl-full              : Full replication mode (wipes destination lane files before copy)")
   print("--repl-changes           : Replicate only all modified files detected by git")
   print("--repl-diff:<branch>     : Replicate only all different files detected by git from diff comparison to <branch>")
@@ -91,11 +91,11 @@ def ShowHelp():
   print("--show                 : Display only SQL statements that would be executed without executing anything")
   print("--debug                : Display every SQL query before executing it")
   print("--silent               : Do not print any messages, only errors")
+  print("--name-like:<filter>   : Filter schema objects by object name using wildcard pattern (only for --schema-list and --schema-clean)")
   print("")
   print("Notes:")
-  print("- Sql scripts changed/added on git repo are those returned by \"git status --porcelain=v1 --untracked-files=all\" command.")
-  print("- Scripts are executed only if modification date is earlier than last execution date")
-  print("- Test mode for execution of scripts is implemented by replicating scripts into a test database schema with full permissions")
+  print("- Sql scripts changed/added on git repo are those returned by \"git status --porcelain=v1 --untracked-files=all\" command")
+  print("- Scripts are executed only if modification date is earlier than last execution date, unless --ignore-hash option is provided")
   print("- Only for --sql mode, several connection names can be given (separated by comma)")
   print("- Snowflake connections.toml file is read from environment variable SNOWFLAKE_HOME if present, if not it must be passed using --sfcon option")
   print("- For code replication, top level of current git repository must be configured in configuration file")
@@ -118,7 +118,7 @@ def GetCommandLineOptions():
   ConnectionName=""
   ConnectionsFile=(os.environ[SF_CON_VARIABLE] if SF_CON_VARIABLE in os.environ else "")
   ListSchema=""
-  DropSchema=""
+  CleanSchema=""
   CsvOutput=False
   SilentMode=False
   ForceMode=False
@@ -142,6 +142,8 @@ def GetCommandLineOptions():
   DestinLane=""
   DestinUpdate=True
   MacroFilter="*"
+  NameLikeFilter="*"
+  NameLikeProvided=False
   
   #Get arguments
   for i in range(1,len(sys.argv)):
@@ -166,8 +168,11 @@ def GetCommandLineOptions():
       SqlQuery=Item.replace("--sql:","")
     elif Item.startswith("--schema-list:"):
       ListSchema=Item.replace("--schema-list:","")
-    elif Item.startswith("--schema-drop:"):
-      DropSchema=Item.replace("--schema-drop:","")
+    elif Item.startswith("--schema-clean:"):
+      CleanSchema=Item.replace("--schema-clean:","")
+    elif Item.startswith("--name-like:"):
+      NameLikeFilter=Item.replace("--name-like:","")
+      NameLikeProvided=True
     elif Item=="--macro-list":
       MacroList=True
     elif Item.startswith("--macro-detail:"):
@@ -224,7 +229,7 @@ def GetCommandLineOptions():
   RunModes={
     "EXEC-FILE":len(ExecFileName)!=0,"EXEC-FOLDER":len(ExecFolderName)!=0,"EXEC-CHANGES":ExecChanges==True,"EXEC-DIFF":len(ExecDiffBranch)!=0,
     "TEST-FILE":len(TestFileName)!=0,"TEST-FOLDER":len(TestFolderName)!=0,"TEST-CHANGES":TestChanges==True,"TEST-DIFF":len(TestDiffBranch)!=0,
-    "SCHEMA-LIST":len(ListSchema)!=0,"SCHEMA-CLEAN":len(DropSchema)!=0,"EXEC-SQL":len(SqlQuery)!=0,
+    "SCHEMA-LIST":len(ListSchema)!=0,"SCHEMA-CLEAN":len(CleanSchema)!=0,"EXEC-SQL":len(SqlQuery)!=0,
     "REPL-FULL":ReplFull==True,"REPL-CHANGES":ReplChanges==True,"REPL-DIFF":len(ReplDiffBranch)!=0,"REPL-FILE":ReplFile==True,
     "MACRO-RUN":len(MacroSpec)!=0,"MACRO-LIST":MacroList==True,"MACRO-DETAIL":MacroDetail==True
   }
@@ -284,6 +289,11 @@ def GetCommandLineOptions():
     if len(MacroFilter)==0:
       print("Provide macro name filter value!")
       return False,{}
+
+  #Name filter must only be provided in schema operation modes
+  if RunMode not in ["SCHEMA-LIST","SCHEMA-CLEAN"] and NameLikeProvided==True:
+    print("Provide --name-like parameter only with --schema-list or --schema-clean options")
+    return False,{}
     
   #Schema check must only be provided in replication of testing modes
   if RunMode not in ["TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF","REPL-FULL","REPL-CHANGES","REPL-DIFF","REPL-FILE"] and IgnoreSchemaCheck==True:
@@ -301,7 +311,7 @@ def GetCommandLineOptions():
   Options["test_folder_name"]=TestFolderName
   Options["test_diff_branch"]=TestDiffBranch
   Options["list_schema"]=ListSchema
-  Options["drop_schema"]=DropSchema
+  Options["clean_schema"]=CleanSchema
   Options["sql_query"]=SqlQuery
   Options["connection_name"]=ConnectionName
   Options["connections_file"]=ConnectionsFile
@@ -323,6 +333,7 @@ def GetCommandLineOptions():
   Options["destin_update"]=DestinUpdate
   Options["macro_spec"]=MacroSpec
   Options["macro_filter"]=MacroFilter
+  Options["name_like_filter"]=NameLikeFilter
 
   #Return code
   return True,Options
@@ -840,7 +851,7 @@ def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUT
 # ---------------------------------------------------------------------------------------------------------------------
 # Get objects in schema
 # ---------------------------------------------------------------------------------------------------------------------
-def GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config):
+def GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Config):
   
   #Initialize output
   Objects=[]
@@ -873,7 +884,7 @@ def GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config):
     ObjectSchema=Row["schema_name"]
     ObjectName=Row["name"]
     ObjectFullName=ObjectDatabase+"."+ObjectSchema+"."+ObjectName
-    if ObjectKind in ["TABLE","VIEW"] and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema:
+    if ObjectKind in ["TABLE","VIEW"] and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema and fnmatch.fnmatch(ObjectName,NameLikeFilter):
       Objects.append({"kind":ObjectKind,"name":ObjectFullName})
   
   #Get procedures
@@ -890,7 +901,7 @@ def GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config):
     ObjectSchema=Row["schema_name"]
     ObjectName=Row["arguments"].split("RETURN")[0].replace("DEFAULT ","").replace(", ",",")
     ObjectFullName=ObjectDatabase+"."+ObjectSchema+"."+ObjectName
-    if ObjectBuiltIn=="N" and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema:
+    if ObjectBuiltIn=="N" and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema and fnmatch.fnmatch(ObjectName,NameLikeFilter):
       Objects.append({"kind":"PROCEDURE","name":ObjectFullName})
   
   #Get functions
@@ -907,7 +918,7 @@ def GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config):
     ObjectSchema=Row["schema_name"]
     ObjectName=Row["arguments"].split("RETURN")[0].replace("DEFAULT ","").replace(", ",",")
     ObjectFullName=ObjectDatabase+"."+ObjectSchema+"."+ObjectName
-    if ObjectBuiltIn=="N" and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema:
+    if ObjectBuiltIn=="N" and ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema and fnmatch.fnmatch(ObjectName,NameLikeFilter):
       Objects.append({"kind":"FUNCTION","name":ObjectFullName})
   
   #Get tasks
@@ -923,7 +934,7 @@ def GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config):
     ObjectSchema=Row["schema_name"]
     ObjectName=Row["name"]
     ObjectFullName=ObjectDatabase+"."+ObjectSchema+"."+ObjectName
-    if ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema:
+    if ObjectDatabase==CurrDatabase and ObjectSchema==CurrSchema and fnmatch.fnmatch(ObjectName,NameLikeFilter):
       Objects.append({"kind":"TASK","name":ObjectFullName})
   
   #Return success
@@ -1613,15 +1624,15 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
 # ---------------------------------------------------------------------------------------------------------------------
 # Run mode for list objects in schema
 # ---------------------------------------------------------------------------------------------------------------------
-def RunModeListSchema(Schema,ConnectionName,ConnectionsFile,Config):
+def RunModeListSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Config):
 
   #Get objects in schema
-  Status,Message,Objects=GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config)
+  Status,Message,Objects=GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     _pr.Print(Message)
     return False
 
-  #_pr.Print objects in schema
+  #Print objects in schema
   if len(Objects)!=0:
     ColumnNames=["Kind","ObjectName"]
     ColumnFormats=["L","L"]
@@ -1630,17 +1641,21 @@ def RunModeListSchema(Schema,ConnectionName,ConnectionsFile,Config):
     _pr.PrintTable(ColumnNames,None,ColumnFormats,RowData)
   else:
     _pr.Print(f"No objects present in schema {Schema}")
-  
+
+  #Bottom info
+  _pr.Print(f"Active name filter: {NameLikeFilter}")
+  _pr.Print(f"Total objects selected: {len(Objects)}")
+
   #Return success
   return True
   
 # ---------------------------------------------------------------------------------------------------------------------
 # Run mode for drop objects in schema
 # ---------------------------------------------------------------------------------------------------------------------
-def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
+def RunModeCleanSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Config):
 
   #Get objects in schema
-  Status,Message,Objects=GetObjectsInSchema(Schema,ConnectionName,ConnectionsFile,Config)
+  Status,Message,Objects=GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     _pr.Print(Message)
     return False
@@ -1652,10 +1667,10 @@ def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
   
   #Ask for user confirmation
   _pr.Print("",Volatile=True)
-  _pr.Print(f"The following object(s) will be dropped on {Config["connections"][ConnectionName]["environment"]} environment using connection {ConnectionName.upper()}:")
+  _pr.Print(f"The following {len(Objects)} object(s) will be dropped on {Config["connections"][ConnectionName]["environment"]} environment using connection {ConnectionName.upper()}:")
   for Object in Objects:
     _pr.Print(Object["kind"]+" "+Object["name"])
-  Answer=input(f"Continue (y/n) ?")
+  Answer=input(f"Continue to drop {len(Objects)} objects (y/n) ?")
   if Answer!="y":
     Message="Action cancelled by user"
     _pr.Print(Message)
@@ -1680,6 +1695,9 @@ def RunModeDropSchema(Schema,ConnectionName,ConnectionsFile,Config):
     return False
   _pr.Print("DONE")
 
+  #Bottom info
+  _pr.Print(f"Active name filter: {NameLikeFilter}")
+  _pr.Print(f"Total objects dropped: {len(Objects)}")
   #Return success
   return True
 
@@ -2000,7 +2018,7 @@ if Status==True:
   TestFolderName=Options["test_folder_name"]
   TestDiffBranch=Options["test_diff_branch"]
   ListSchema=Options["list_schema"]
-  DropSchema=Options["drop_schema"]
+  CleanSchema=Options["clean_schema"]
   SqlQuery=Options["sql_query"]
   ConnectionName=Options["connection_name"]
   ConnectionsFile=Options["connections_file"]
@@ -2022,6 +2040,7 @@ if Status==True:
   DestinUpdate=Options["destin_update"]
   MacroSpec=Options["macro_spec"]
   MacroFilter=Options["macro_filter"]
+  NameLikeFilter=Options["name_like_filter"]
 else:
   exit(1)
 
@@ -2109,11 +2128,11 @@ elif RunMode=="MACRO-RUN" and MacroDef["kind"]=="python":
 
 #List objects in schema
 elif RunMode=="SCHEMA-LIST":
-  Status=RunModeListSchema(ListSchema,ConnectionName,ConnectionsFile,Config)
+  Status=RunModeListSchema(ListSchema,NameLikeFilter,ConnectionName,ConnectionsFile,Config)
 
-#Drop objects in schema
+#Clean objects in schema
 elif RunMode=="SCHEMA-CLEAN":
-  Status=RunModeDropSchema(DropSchema,ConnectionName,ConnectionsFile,Config)
+  Status=RunModeCleanSchema(CleanSchema,NameLikeFilter,ConnectionName,ConnectionsFile,Config)
 
 #Project code replication modes
 elif RunMode in ["REPL-FULL","REPL-CHANGES","REPL-DIFF","REPL-FILE"]:
