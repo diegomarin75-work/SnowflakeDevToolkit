@@ -52,7 +52,7 @@ def ShowHelp():
   print("Script test      > python sf.py (--test-file:<name>|--test-folder:<name>|--test-changes|--test-diff:<branch>) --con:<name> [--sfcon:<file>] [--force] [--ignore-hash] [--show] [--debug] [--silent]")
   print("Schema operation > python sf.py (--schema-list:<schema>|--schema-clean:<schema>) --con:<name> [--name-like:<filter>] [--sfcon:<file>] [--silent]")
   print("Code replication > python sf.py (--repl-full|--repl-changes|--repl-diff:<branch>|--repl-file:<pattern>) [--lanes:<sour>,<dest>] [--update] [--sfcon:<file>]")   
-  print("SQL query        > python sf.py (--sql:<text>) --con:<name> [--sfcon:<file>] [--payload] [--types] [--sep] [--csv] [--show] [--debug] [--silent]")
+  print("SQL query        > python sf.py (--sql:<text>) [--con:<name>] [--sfcon:<file>] [--payload] [--types] [--sep] [--csv] [--show] [--debug] [--silent]")
   print("Macros           > python sf.py (--<macro>(<arg>)|--macro-list|--macro-detail:<filter>)")
   print("")
   print("Run modes:")
@@ -96,9 +96,8 @@ def ShowHelp():
   print("Notes:")
   print("- Sql scripts changed/added on git repo are those returned by \"git status --porcelain=v1 --untracked-files=all\" command")
   print("- Scripts are executed only if modification date is earlier than last execution date, unless --ignore-hash option is provided")
-  print("- Only for --sql mode, several connection names can be given (separated by comma)")
+  print("- Only for --sql mode, connection can be omitted if defaults are set on config file, several connection names can be given (separated by comma)")
   print("- Snowflake connections.toml file is read from environment variable SNOWFLAKE_HOME if present, if not it must be passed using --sfcon option")
-  print("- For code replication, top level of current git repository must be configured in configuration file")
   
 #----------------------------------------------------------------------------------------------------------------------
 # Get command line arguments
