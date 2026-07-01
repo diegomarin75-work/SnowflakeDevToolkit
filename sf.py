@@ -103,7 +103,7 @@ def ShowHelp():
 #----------------------------------------------------------------------------------------------------------------------
 # Get command line arguments
 #----------------------------------------------------------------------------------------------------------------------
-def GetCommandLineOptions():
+def GetCommandLineOptions(Config):
 
   #Default values for options
   ExecFileName=""
@@ -269,8 +269,10 @@ def GetCommandLineOptions():
   #Check connections for single connection modes
   if RunMode in ["EXEC-SQL"]:
     if len(ConnectionName)==0:
-      print("Must provide connection name (--con option)")
-      return False,{}
+      ConnectionName=DeriveConnectionName(Config,SqlQuery)
+      if ConnectionName==None:
+        print("Must provide connection name (--con option)")
+        return False,{}
     if ForceMode==True:
       print("Do not provice --force parameter with --sql, does not have any effect")
       return False,{}
@@ -337,6 +339,16 @@ def GetCommandLineOptions():
 
   #Return code
   return True,Options
+
+# ----------------------------------------------------------------------------------
+# Derive default connection in SQL query mode
+# (uses "default_connections" node in configuration file
+# ----------------------------------------------------------------------------------
+def DeriveConnectionName(Config,SqlQuery):
+  for Defaut in Config["default_connections"]:
+    if re.search(Defaut["sql_regex"],SqlQuery)!=None:
+      return Defaut["connection"]
+  return None
 
 # ----------------------------------------------------------------------------------
 # Loads JSON configuration file
@@ -1398,12 +1410,21 @@ def CreateTestResources(Path,Config,DeployConfig,IgnoreSchemaCheck,Resources=Non
 
   #Fill resources list
   if Resources!=None:
-    FileOrder={File:Index for Index,File in enumerate(DeployCfg)}
+    MissingFiles=[]
+    FileOrder=({File:Index for Index,File in enumerate(DeployCfg)} if DeployCfg!=None else {})
     for NaturalIndex,File in enumerate(ReplicFiles):
       Order=(FileOrder[File["orig_name"]] if File["orig_name"] in FileOrder else len(ReplicFiles)+NaturalIndex)
       Resource={"order":Order,"orig_name":File["orig_name"],"repl_name":File["repl_name"]}
       Resources.append(Resource)
+      if DeployCfg!=None and File["orig_name"].endswith(EXEC_SCRIPT_EXT)==True and File["orig_name"] not in DeployCfg:
+        MissingFiles.append(File["orig_name"])
     Resources.sort(key=lambda x:x["order"])
+  
+  #Error if there are missing files in deployment configuration
+  if len(MissingFiles)!=0:
+    Message=f"Deployment configuration does not list the following {len(MissingFiles)} file(s):"+ \
+    f"\n{'\n'.join(MissingFiles)}\nReview deployment configuration if new files were added recently."
+    return False,Message,None
   
   #Return success
   return True,"",Result
@@ -1494,7 +1515,7 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
 
   #Execute statements
   StartTime=datetime.datetime.now()
-  _pr.Print(f"Executing {"(payload) " if PayloadMode==True else ""}...",Volatile=True)
+  _pr.Print(f"Executing {Connections}{" (payload)" if PayloadMode==True else ""} ...",Volatile=True)
   for Sql in Statements:
     
     #Loop over connections
@@ -1507,7 +1528,7 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
         continue
       Status,Message,WrappedMode,Query,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode,DebugMode,PayloadMode)
       if Status==False:
-        _pr.Print(f"[ERROR] Execution failed: "+Message)
+        _pr.Print(f"[ERROR] Execution {ConnectionName} failed: "+Message)
         if Query!=None:
           _pr.Print("Passed query:")
           CodePrint(Query)
@@ -1894,7 +1915,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
     Status,Message,_,Query,_,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode,DebugMode)
     if Status==False:
       _pr.Print("")
-      _pr.Print(f"[ERROR] Execution failed: "+Message)
+      _pr.Print(f"[ERROR] Execution {ConnectionName} failed: "+Message)
       if Query!=None:
         _pr.Print("Passed query:")
         CodePrint(Query)
@@ -2007,8 +2028,36 @@ if len(sys.argv)<2:
   ShowHelp()
   exit(0)
   
+#Init output library
+_pr=PrintingLibrary()
+
+#Load config files
+ConfigFilePath=(os.environ[CFG_ENV_VAR_NAME] if CFG_ENV_VAR_NAME in os.environ else os.path.dirname(AbsPath(sys.argv[0]))+os.sep+CFG_FILE_NAME)
+Status,Message,Config=JsonFileParser(ConfigFilePath)
+if Status==False:
+  _pr.Print(Message)
+  exit(1)
+MacrosConfig=None
+ScLanesConfig=None
+if "macros_file" in Config:
+  Status,Message,MacrosConfig=JsonFileParser(Config["macros_file"])
+  if Status==False:
+    _pr.Print(Message)
+    exit(1)
+if "sclanes_file" in Config:
+  Status,Message,ScLanesConfig=JsonFileParser(Config["sclanes_file"])
+  if Status==False:
+    _pr.Print(Message)
+    exit(1)
+if "deploy_file" in Config:
+  Status,Message,DeployConfig=JsonFileParser(Config["deploy_file"])
+  if Status==False:
+    _pr.Print(Message)
+    exit(1)
+
+
 #Get command line arguments
-Status,Options=GetCommandLineOptions()
+Status,Options=GetCommandLineOptions(Config)
 if Status==True:
   RunMode=Options["run_mode"]
   ExecFileName=Options["exec_file_name"]
@@ -2044,33 +2093,8 @@ if Status==True:
 else:
   exit(1)
 
-#Set filent mode
-_pr=PrintingLibrary()
+#Set silent mode
 _pr.SetSilentMode(SilentMode)
-
-#Load config files
-ConfigFilePath=(os.environ[CFG_ENV_VAR_NAME] if CFG_ENV_VAR_NAME in os.environ else os.path.dirname(AbsPath(sys.argv[0]))+os.sep+CFG_FILE_NAME)
-Status,Message,Config=JsonFileParser(ConfigFilePath)
-if Status==False:
-  _pr.Print(Message)
-  exit(1)
-MacrosConfig=None
-ScLanesConfig=None
-if "macros_file" in Config:
-  Status,Message,MacrosConfig=JsonFileParser(Config["macros_file"])
-  if Status==False:
-    _pr.Print(Message)
-    exit(1)
-if "sclanes_file" in Config:
-  Status,Message,ScLanesConfig=JsonFileParser(Config["sclanes_file"])
-  if Status==False:
-    _pr.Print(Message)
-    exit(1)
-if "deploy_file" in Config:
-  Status,Message,DeployConfig=JsonFileParser(Config["deploy_file"])
-  if Status==False:
-    _pr.Print(Message)
-    exit(1)
 
 #If run mode is macro run we need to check passed macro
 PreloadLibraries=True
