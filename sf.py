@@ -1410,9 +1410,10 @@ def CreateTestResources(Path,Config,DeployConfig,IgnoreSchemaCheck,Resources=Non
   #Fill resources list
   if Resources!=None:
     MissingFiles=[]
-    FileOrder=({File:Index for Index,File in enumerate(DeployCfg)} if DeployCfg!=None else {})
+    ReplicFiles.sort(key=lambda f:os.path.basename(f["orig_name"]))
+    DeployOrder=({File:Index for Index,File in enumerate(DeployCfg)} if DeployCfg!=None else {})
     for NaturalIndex,File in enumerate(ReplicFiles):
-      Order=(FileOrder[File["orig_name"]] if File["orig_name"] in FileOrder else len(ReplicFiles)+NaturalIndex)
+      Order=(DeployOrder[File["orig_name"]] if File["orig_name"] in DeployOrder else len(ReplicFiles)+NaturalIndex)
       Resource={"order":Order,"orig_name":File["orig_name"],"repl_name":File["repl_name"]}
       Resources.append(Resource)
       if DeployCfg!=None and File["orig_name"].endswith(EXEC_SCRIPT_EXT)==True and File["orig_name"] not in DeployCfg:
@@ -1872,10 +1873,13 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
   #Confirmation from user about execution
   if ForceMode==False:
     UniqueFiles=collections.Counter([Query["file_name"] for Query in Queries])
-    MaxFileNameLength=max([len(File) for File in UniqueFiles])
+    MaxDirNameLength=max([len(os.path.dirname(File)) for File in UniqueFiles])
+    MaxFileNameLength=max([len(os.path.basename(File)) for File in UniqueFiles])
     KeyWords=",".join([Query["keyword"] for Query in Queries])
     _pr.Print(f"The following script(s) will be executed on {Config["connections"][ConnectionName]["environment"]} environment using connection {ConnectionName.upper()}:")
     for File in UniqueFiles:
+      FileName=os.path.basename(File)
+      DirName=os.path.dirname(File)
       KeyWords=[]
       LastKeyWord=""
       Count=0
@@ -1887,7 +1891,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
         Count+=1
       if len(LastKeyWord)!=0:
         KeyWords.append(LastKeyWord+"["+str(Count)+"]")
-      _pr.Print(File.ljust(MaxFileNameLength)+" ("+str(UniqueFiles[File])+f" statement(s): {", ".join(KeyWords).replace("[1]","")})")
+      _pr.Print(FileName.ljust(MaxFileNameLength)+" :"+DirName.ljust(MaxDirNameLength)+" ("+str(UniqueFiles[File])+f" statement(s): {", ".join(KeyWords).replace("[1]","")})")
     _pr.Print(f"{len(Files)}(s) files selected for execution"+(f", {TotalFiles-len(Files)}(s) files ignored" if TotalFiles!=len(Files) else ""))
     Answer=input(f"Continue (y/n) ?")
     if Answer!="y":
