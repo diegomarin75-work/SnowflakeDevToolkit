@@ -19,7 +19,7 @@ import contextlib
 import traceback
 import threading
 from printlib import PrintingLibrary
-from sfmanager import SnowflakeManager
+from sfdaemon import SqlClient
 
 #Constants
 EXEC_SCRIPT_EXT=".sql"
@@ -39,7 +39,7 @@ SNOWFLAKE_TYPE_CODES={0 :"int", 1 :"real", 2 :"string", 3 :"date", 4 :"timestamp
                       8 :"timestamp_tz", 9 :"object", 10:"array", 11:"binary", 12:"time", 13:"boolean", 14:"geography", 15:"geometry", 16:"vector"  }
 
 #Global variablees
-_sf=None #Snowflake manager instance
+_sfd=None #Snowflake daemon instance
 
 #----------------------------------------------------------------------------------------------------------------------
 # Show help
@@ -690,7 +690,7 @@ def SplitSqlStatements(Script):
   
   #Split statements with snowflake splitter
   #(limitation: it does not join BEGIN...END blocks into a single statement)
-  Statements=_sf.SplitStatements(Script)
+  Statements=_sfd.SplitStatements(Script)
   Statements=[Statement[0] for Statement in Statements if len(Statement[0].strip())!=0]
   
   #Calculate nesting level of each statement
@@ -843,13 +843,9 @@ def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUT
       Message=f"Query execution aborted by user"
       return False,Message,WrappedMode,None,None,None
 
-  #Open connection
-  Status,Message=_sf.OpenConnection(ConnectionName)
-  if Status==False:
-    return False,Message,WrappedMode,None,None,None
-
   #Execute query
-  Status,Message,Result,ColMetaData=_sf.ExecuteRawQuery(Query)
+  _sfd.SetConnection(ConnectionName)
+  Status,Message,Result,ColMetaData=_sfd.ExecuteSqlQuery(Query,RawMode=True)
   if Status==False:
     return False,Message,WrappedMode,Query,None,None
   if WrappedMode==True and Result[0][0]!="DONE":
@@ -2116,8 +2112,8 @@ if RunMode=="MACRO-RUN":
   if MacroDef["kind"]=="python":
     PreloadLibraries=False
 
-#Initialize snowflake manager
-_sf=SnowflakeManager(PreloadLibraries=PreloadLibraries,ConnectionsFile=ConnectionsFile)
+#Initialize snowflake daemon
+_sfd=SqlClient(ConnectionsFile=ConnectionsFile)
 
 #Check connections exist on config file and check connection readiness
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF","SCHEMA-LIST","SCHEMA-CLEAN","EXEC-SQL"] or (RunMode=="MACRO-RUN" and MacroDef["kind"]=="sql"):
@@ -2170,8 +2166,8 @@ elif RunMode in ["MACRO-LIST","MACRO-DETAIL"]:
   Status=RunModeMacros(RunMode,MacroFilter,MacrosConfig)
 
 #Return code
-if _sf is not None:
-  _sf.CloseConnection()
+if _sfd is not None:
+  _sfd.ForgetConnection()
 if Status==False:
   exit(1)
 else:
