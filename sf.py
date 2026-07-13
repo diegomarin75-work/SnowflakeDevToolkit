@@ -690,8 +690,9 @@ def SplitSqlStatements(Script):
   
   #Split statements with snowflake splitter
   #(limitation: it does not join BEGIN...END blocks into a single statement)
-  Statements=_sfd.SplitStatements(Script)
-  Statements=[Statement[0] for Statement in Statements if len(Statement[0].strip())!=0]
+  Status,Message,Statements=_sfd.SplitStatements(Script)
+  if Status==False:
+    return False,Message,None
   
   #Calculate nesting level of each statement
   NestingLevel=0
@@ -730,7 +731,7 @@ def SplitSqlStatements(Script):
     JoinedStatements.append(JoinStatement)
   
   #Return statements
-  return JoinedStatements    
+  return True,"",JoinedStatements    
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Get queries inside files
@@ -751,7 +752,10 @@ def GetQueriesInFiles(FileNames,ConnectionName,Config):
 
     #Split statements
     QueryNr=0
-    Statements=SplitSqlStatements(Script)
+    Status,Message,Statements=SplitSqlStatements(Script)
+    if Status==False:
+      _pr.Print(f"Unable to split statements in file {FileName}: {Message}")
+      return False,[]
     for Sql in Statements:
       ExecMode,KeyWord=GetQueryExecutionMode(Sql,ConnectionName,Config)
       if ExecMode==None:
@@ -1507,7 +1511,10 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
   if re.search(r'\bBEGIN\b',SqlQueryAfterMacros,re.IGNORECASE):
     Statements=[SqlQueryAfterMacros]
   else:
-    Statements=SplitSqlStatements(SqlQueryAfterMacros)
+    Status,Message,Statements=SplitSqlStatements(SqlQueryAfterMacros)
+    if Status==False:
+      _pr.Print(f"[ERROR] Unable to split SQL statements: {Message}")
+      return False
 
   #Execute statements
   StartTime=datetime.datetime.now()
