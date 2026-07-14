@@ -841,11 +841,11 @@ def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUT
 
   #Execute query
   _sfd.SetConnection(ConnectionName)
-  Status,Message,Result,ColMetaData=_sfd.ExecuteSqlQuery(Query,RawMode=True)
+  Status,Message,Result,ColMetaData=_sfd.ExecuteSqlQuery(Query)
   if Status==False:
     return False,Message,WrappedMode,Query,None,None
-  if WrappedMode==True and Result[0][0]!="DONE":
-    Message=Result[0][0]
+  if WrappedMode==True and Result[0][ColMetaData[0]["name"]]!="DONE":
+    Message=Result[0][ColMetaData[0]["name"]]
     return False,Message,WrappedMode,Query,None,None
   
   #Return success
@@ -866,22 +866,21 @@ def GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Conf
   else:
     _pr.Print("Getting current database ...",Volatile=True)
     Sql="SELECT CURRENT_DATABASE() AS CURR_DBNAME"
-    Status,Message,_,_,Result,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
+    Status,Message,_,_,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
     if Status==False:
       Message="Unable to get current database: "+Message
       return False,Message,None
-    CurrDatabase=Result[0][0]
+    CurrDatabase=Result[0][ColMetaData[0]["name"]]
     CurrSchema=Schema
 
   #Get tables/views
   _pr.Print(f"Getting tables/views in schema {CurrDatabase}.{CurrSchema} ...",Volatile=True)
   Sql="SHOW OBJECTS IN SCHEMA <database>.<schema>".replace("<database>",CurrDatabase).replace("<schema>",CurrSchema)
-  Status,Message,_,_,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
+  Status,Message,_,_,Result,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     Message=f"Unable to get tables/views in schena {CurrSchema}: {Message}"
     return False,Message,None
-  Results=[{ColMetaData[Index].name:Field for Index,Field in enumerate(Row)} for Row in Result]
-  for Row in Results:
+  for Row in Result:
     ObjectKind=Row["kind"]
     ObjectDatabase=Row["database_name"]
     ObjectSchema=Row["schema_name"]
@@ -893,12 +892,11 @@ def GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Conf
   #Get procedures
   _pr.Print(f"Getting procedures in schema {CurrDatabase}.{CurrSchema} ...",Volatile=True)
   Sql="SHOW PROCEDURES IN SCHEMA <database>.<schema>".replace("<database>",CurrDatabase).replace("<schema>",CurrSchema)
-  Status,Message,_,_,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
+  Status,Message,_,_,Result,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     Message=f"Unable to get procedures in schena {CurrSchema}: {Message}"
     return False,Message,None
-  Results=[{ColMetaData[Index].name:Field for Index,Field in enumerate(Row)} for Row in Result]
-  for Row in Results:
+  for Row in Result:
     ObjectBuiltIn=Row["is_builtin"]
     ObjectDatabase=Row["catalog_name"]
     ObjectSchema=Row["schema_name"]
@@ -910,12 +908,11 @@ def GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Conf
   #Get functions
   _pr.Print(f"Getting functions in schema {CurrDatabase}.{CurrSchema} ...",Volatile=True)
   Sql="SHOW FUNCTIONS IN SCHEMA <database>.<schema>".replace("<database>",CurrDatabase).replace("<schema>",CurrSchema)
-  Status,Message,_,_,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
+  Status,Message,_,_,Result,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     Message=f"Unable to get functions in schena {CurrSchema}: {Message}"
     return False,Message,None
-  Results=[{ColMetaData[Index].name:Field for Index,Field in enumerate(Row)} for Row in Result]
-  for Row in Results:
+  for Row in Result:
     ObjectBuiltIn=Row["is_builtin"]
     ObjectDatabase=Row["catalog_name"]
     ObjectSchema=Row["schema_name"]
@@ -927,12 +924,11 @@ def GetObjectsInSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Conf
   #Get tasks
   _pr.Print(f"Getting tasks in schema {CurrDatabase}.{CurrSchema} ...",Volatile=True)
   Sql="SHOW TASKS IN SCHEMA <database>.<schema>".replace("<database>",CurrDatabase).replace("<schema>",CurrSchema)
-  Status,Message,_,_,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
+  Status,Message,_,_,Result,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config)
   if Status==False:
     Message=f"Unable to get tasks in schena {CurrSchema}: {Message}"
     return False,Message,None
-  Results=[{ColMetaData[Index].name:Field for Index,Field in enumerate(Row)} for Row in Result]
-  for Row in Results:
+  for Row in Result:
     ObjectDatabase=Row["database_name"]
     ObjectSchema=Row["schema_name"]
     ObjectName=Row["name"]
@@ -1541,13 +1537,13 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
         ColumnFormats=["L","L","R","R","R","R","C"]
         Result=[]
         for Col in ColMetaData:
-          ColName=str(Col.name)
-          TypeName=(SNOWFLAKE_TYPE_CODES[Col.type_code] if Col.type_code in SNOWFLAKE_TYPE_CODES else "(unknown)")
-          DisplaySize=("" if Col.display_size==None else str(Col.display_size))
-          InternalSize=("" if Col.internal_size==None else str(Col.internal_size))
-          Precision=("" if Col.precision==None else str(Col.precision))
-          Scale=("" if Col.scale==None else str(Col.scale))
-          IsNullable=("Yes" if Col.is_nullable==True else "-")
+          ColName=Col["name"]
+          TypeName=Col["type"]
+          DisplaySize=("" if Col["display_size"]==None else str(Col["display_size"]))
+          InternalSize=("" if Col["internal_size"]==None else str(Col["internal_size"]))
+          Precision=("" if Col["precision"]==None else str(Col["precision"]))
+          Scale=("" if Col["scale"]==None else str(Col["scale"]))
+          IsNullable=("Yes" if Col["is_nullable"]==True else "-")
           Result.append([ColName,TypeName,DisplaySize,InternalSize,Precision,Scale,IsNullable])
         if CombineResults==True and len(Connections.split(","))>1:
           OutputResults.append({"connection_name":ConnectionName,"column_names":ColumnNames,"column_types":None,"column_formats":ColumnFormats,"row_data":Result,"row_count":OutputRows})
@@ -1558,12 +1554,12 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
       #Get results when output is rows
       else:
         if Result!=None:
-          Result=[[str(Column).replace("\r","") for Column in Row] for Row in Result]
+          Result=[[str(Row[Column]).replace("\r","") for Column in Row] for Row in Result]
         if len(Result)==0:
           Result=[["" for Col in ColMetaData]]
         OutputRows=len(Result)
-        ColumnNames=[Col.name for Col in ColMetaData]
-        ColumnTypes=[("("+SNOWFLAKE_TYPE_CODES[Col.type_code]+")" if Col.type_code in SNOWFLAKE_TYPE_CODES else "(unknown)") for Col in ColMetaData]
+        ColumnNames=[Col["name"].lower() for Col in ColMetaData]
+        ColumnTypes=["("+Col["type"].lower()+")" for Col in ColMetaData]
         if MacroColumnFormats!=None:
           ColumnFormats=MacroColumnFormats
         else:  
