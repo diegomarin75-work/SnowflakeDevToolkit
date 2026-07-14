@@ -799,7 +799,7 @@ def ExpandMacros(Query,Macros):
 # ---------------------------------------------------------------------------------------------------------------------
 # Execute query
 # ---------------------------------------------------------------------------------------------------------------------
-def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUTE",ShowMode=False,DebugMode=False,PayloadMode=False):
+def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUTE",ShowMode=False,PayloadMode=False):
   
   #Get query
   Query=SqlQuery
@@ -822,30 +822,22 @@ def ExecuteQuery(SqlQuery,ConnectionName,ConnectionsFile,Config,ExecMode="EXECUT
     WrappedMode=True
   
   #Execute jinja2 templates
-  for TemplateName in Config["connections"][ConnectionName]["jinja2_templates"]:
-    TemplateDef={}
-    for Item in Config["jinja2_templates_def"][TemplateName]:
-      Variable=Item["variable"]
-      Value=Item["value"]
-      if Value.startswith("@"):
-        Value=Config["connections"][ConnectionName][Value[1:]]
-      TemplateDef[Variable]=Value
-  Jinja2Template=jinja2.Template(Query)
-  Query=Jinja2Template.render(**TemplateDef)
+  if Query.find("{{")!=-1 or Query.find("{%")!=-1:
+    for TemplateName in Config["connections"][ConnectionName]["jinja2_templates"]:
+      TemplateDef={}
+      for Item in Config["jinja2_templates_def"][TemplateName]:
+        Variable=Item["variable"]
+        Value=Item["value"]
+        if Value.startswith("@"):
+          Value=Config["connections"][ConnectionName][Value[1:]]
+        TemplateDef[Variable]=Value
+    Jinja2Template=jinja2.Template(Query)
+    Query=Jinja2Template.render(**TemplateDef)
 
   #Display query in show mode
   if ShowMode==True:
     _pr.Print(Query)
     return True,"",WrappedMode,None,None,None
-
-  #Ask before executing in debug mode
-  if DebugMode==True:
-    _pr.Print("Query about to execute:")
-    _pr.Print(Query)
-    Answer=input(f"Execute on connection {ConnectionName} (y/n) ?")
-    if Answer!="y":
-      Message=f"Query execution aborted by user"
-      return False,Message,WrappedMode,None,None,None
 
   #Execute query
   _sfd.SetConnection(ConnectionName)
@@ -1502,7 +1494,7 @@ def RunModeMacros(RunMode,MacroFilter,Config):
 # ---------------------------------------------------------------------------------------------------------------------
 # Run SQL query mode
 # ---------------------------------------------------------------------------------------------------------------------
-def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,DebugMode,PayloadMode):
+def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,PayloadMode):
   
   #Complete macro replacements
   SqlQueryAfterMacros,MacroColumnFormats=ExpandMacros(SqlQuery,MacrosConfig)
@@ -1529,7 +1521,7 @@ def RunModeSqlQuery(Connections,ConnectionsFile,SqlQuery,DisplayTypes,CombineRes
       ExecMode,KeyWord=GetQueryExecutionMode(Sql,ConnectionName,Config)
       if ExecMode=="IGNORE":
         continue
-      Status,Message,WrappedMode,Query,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode,DebugMode,PayloadMode)
+      Status,Message,WrappedMode,Query,Result,ColMetaData=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode,PayloadMode)
       if Status==False:
         _pr.Print(f"[ERROR] Execution {ConnectionName} failed: "+Message)
         if Query!=None:
@@ -1729,7 +1721,7 @@ def RunModeCleanSchema(Schema,NameLikeFilter,ConnectionName,ConnectionsFile,Conf
 # Run modes for script execution
 # ---------------------------------------------------------------------------------------------------------------------
 def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,
-                           DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig=None,DeployConfig=None,TestMode=False):
+                           IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig=None,DeployConfig=None,TestMode=False):
 
   #Test resources list
   Resources=[]
@@ -1916,9 +1908,7 @@ def RunModeScriptExecution(RunMode,FileName,FolderName,DiffBranch,ConnectionName
     KeyWord=Query["keyword"]
     if ShowMode==False:
       _pr.Print(f"Executing {FileName.ljust(MaxLengthFileName)} ({str(Index).ljust(MaxLengthIndex)}: {KeyWord} query) ... ",Partial=True)
-      if DebugMode==True:
-        print()
-    Status,Message,_,Query,_,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode,DebugMode)
+    Status,Message,_,Query,_,_=ExecuteQuery(Sql,ConnectionName,ConnectionsFile,Config,ExecMode,ShowMode)
     if Status==False:
       _pr.Print("")
       _pr.Print(f"[ERROR] Execution {ConnectionName} failed: "+Message)
@@ -2103,7 +2093,6 @@ else:
 _pr.SetSilentMode(SilentMode)
 
 #If run mode is macro run we need to check passed macro
-PreloadLibraries=True
 if RunMode=="MACRO-RUN":
   MacroName=MacroSpec.split("(")[0]
   if not MacroName in MacrosConfig:
@@ -2116,11 +2105,9 @@ if RunMode=="MACRO-RUN":
   if MacroDef["kind"]=="python" and len(ConnectionName)!=0:
     _pr.Print(f"Macro {MacroName}() is defined as python and connection parameter must not be provided!")
     exit(1)
-  if MacroDef["kind"]=="python":
-    PreloadLibraries=False
 
 #Initialize snowflake daemon
-_sfd=SqlClient(ConnectionsFile=ConnectionsFile)
+_sfd=SqlClient(ConnectionsFile=ConnectionsFile,Debug=DebugMode)
 
 #Check connections exist on config file and check connection readiness
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF","SCHEMA-LIST","SCHEMA-CLEAN","EXEC-SQL"] or (RunMode=="MACRO-RUN" and MacroDef["kind"]=="sql"):
@@ -2138,19 +2125,19 @@ if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF","TEST-FILE",
 
 #Script execution modes
 if RunMode in ["EXEC-FILE","EXEC-FOLDER","EXEC-CHANGES","EXEC-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,None,DeployConfig)
+  Status=RunModeScriptExecution(RunMode,ExecFileName,ExecFolderName,ExecDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,IgnoreSchemaCheck,ContinueOnError,Config,None,DeployConfig)
 
 #Script testing modes
 elif RunMode in ["TEST-FILE","TEST-FOLDER","TEST-CHANGES","TEST-DIFF"]:
-  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,DebugMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig,DeployConfig,TestMode=True)
+  Status=RunModeScriptExecution(RunMode,TestFileName,TestFolderName,TestDiffBranch,ConnectionName,ConnectionsFile,ForceMode,IgnoreHash,ShowMode,IgnoreSchemaCheck,ContinueOnError,Config,ScLanesConfig,DeployConfig,TestMode=True)
 
 #Execute single SQL Query mode
 elif RunMode=="EXEC-SQL":
-  Status=RunModeSqlQuery(ConnectionName,ConnectionsFile,SqlQuery,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,DebugMode,PayloadMode)
+  Status=RunModeSqlQuery(ConnectionName,ConnectionsFile,SqlQuery,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,PayloadMode)
 
 #Execute single SQL Query from macro
 elif RunMode=="MACRO-RUN" and MacroDef["kind"]=="sql":
-  Status=RunModeSqlQuery(ConnectionName,ConnectionsFile,MacroSpec,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,DebugMode,PayloadMode)
+  Status=RunModeSqlQuery(ConnectionName,ConnectionsFile,MacroSpec,DisplayTypes,CombineResults,CsvOutput,Config,MacrosConfig,ShowMode,PayloadMode)
 
 #Execute python code from macro
 elif RunMode=="MACRO-RUN" and MacroDef["kind"]=="python":
