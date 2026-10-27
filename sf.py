@@ -185,7 +185,6 @@ def GetCommandLineOptions(Config):
       SilentMode=True
     elif Item=="--csv":
       CsvOutput=True
-      SilentMode=True
     elif Item=="--force":
       ForceMode=True
     elif Item=="--ignore-hash":
